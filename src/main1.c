@@ -11,10 +11,55 @@
 /* 
  * My output on an Intel Core i5-2520M CPU @ 2.50GHz:
  *
- * [PERF] 120 <- fork/join  480
- * [PERF] 13 <- yield       49
+ * [PERF] 120 <- fork/join
+ * [PERF] 13 <- yield
  * [TEST] thread creation/join/scheduling
  */
+
+
+/*
+ * Our output on
+ * Vmware on Surface Pro4 without Thread pool
+ * Intel Core i5-6300U CPU @ 2.40GHz:
+ *
+ * [PERF] 467 <- fork/join
+ * [PERF] 42 <- yield
+ * [TEST] thread creation/join/scheduling
+ */
+
+
+/*
+ * Our output on
+ * Vmware on Surface Pro4 with Thread pool
+ * Intel Core i5-6300U CPU @ 2.40GHz:
+ *
+ * [PERF] 161 <- fork/join
+ * [PERF] 42 <- yield
+ * [TEST] thread creation/join/scheduling
+ */
+
+/*
+ * Our output on
+ * Vmware on Alienware R4 without Thread pool
+ * Intel Core i7-6700HQ CPU @ 2.60GHz:
+ *
+ * [PERF] 95 <- fork/join
+ * [PERF] 1 <- yield
+ * [TEST] thread creation/join/scheduling
+ */
+
+/*
+ * Our output on
+ * Vmware on Alienware R4 with Thread pool
+ * Intel Core i7-6700HQ CPU @ 2.60GHz:
+ *
+ * [PERF] 88 <- fork/join
+ * [PERF] 1 <- yield
+ * [TEST] thread creation/join/scheduling
+ */
+
+
+
 
 void *
 fn_bounce(void *d) 

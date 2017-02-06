@@ -1,7 +1,7 @@
 #define LWT_NULL 0
 
 #define SIZE_OF_LWT_INFO 3
-#define LWT_USE_POOL
+//#define LWT_USE_POOL
 #define LWT_INLINE __attribute__((always_inline))
 
 #include "lwt_dispatch.h"
