@@ -22,7 +22,7 @@ Return      : None.
 void
 Sys_init_list()
 {
-	    glb_head.prev=&glb_head;
+             glb_head.prev=&glb_head;
 		glb_head.next=&glb_head;
 
 		wait_head.prev=&wait_head;
@@ -33,6 +33,7 @@ Sys_init_list()
 
 		pool_head.prev=&pool_head;
 		pool_head.next=&pool_head;
+
 }
 /* End Function:Sys_init_list **********************************************/
 
