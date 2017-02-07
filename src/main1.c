@@ -22,8 +22,8 @@
  * Vmware on Surface Pro4 without Thread pool
  * Intel Core i5-6300U CPU @ 2.40GHz:
  *
- * [PERF] 467 <- fork/join
- * [PERF] 42 <- yield
+ * [PERF] 502 <- fork/join
+ * [PERF] 17 <- yield
  * [TEST] thread creation/join/scheduling
  */
 
@@ -33,8 +33,8 @@
  * Vmware on Surface Pro4 with Thread pool
  * Intel Core i5-6300U CPU @ 2.40GHz:
  *
- * [PERF] 161 <- fork/join
- * [PERF] 42 <- yield
+ * [PERF] 199 <- fork/join
+ * [PERF] 17 <- yield
  * [TEST] thread creation/join/scheduling
  */
 

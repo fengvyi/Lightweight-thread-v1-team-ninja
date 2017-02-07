@@ -14,22 +14,25 @@
  ============================================================================
  */
 
+/* Config Includes ***********************************************************/
 #include <stdio.h>
 #include <stdlib.h>
 #include "lwt.h"
+/* End Config Includes *******************************************************/
+
+/* Public Global Variables ***************************************************/
 extern void test(void* param);
-
-
-struct list_head glb_head;
-struct list_head wait_head;
-struct list_head zombie_head;
-struct list_head pool_head;
 int cur_tid=1;
 int glb_thd_num=0;
 int count_thd[SIZE_OF_LWT_INFO];
+/* End Public Global Variables ***********************************************/
 
-
-
+/* Begin Function:__lwt_schedule *********************************************
+Description : Switch to another thread.
+Input       : lwt_t thd - The thread who calls schedule.
+Output      : glb_head.next - The next thread to run.
+Return      : None.
+******************************************************************************/
 void LWT_INLINE
 __lwt_schedule(lwt_t thd)
 {
@@ -37,24 +40,17 @@ __lwt_schedule(lwt_t thd)
 
 	/* put the current guy at the end of the queue */
 	info=glb_head.next;
-	glb_head.next=info->next;
-	glb_head.next->prev=&glb_head;
+	Sys_delete_node(&glb_head,glb_head.next->next);
 
-	info->prev=glb_head.prev;
-	info->next=&glb_head;
-	glb_head.prev->next=info;
-	glb_head.prev=info;
+	Sys_insert_node(info,&glb_head,glb_head.next);
 
 	if(thd!=0)
 	{
 		/* put this guy at the beginning of the queue */
-		thd->head.prev->next=thd->head.next;
-		thd->head.next->prev=thd->head.prev;
 
-		thd->head.prev=&glb_head;
-		thd->head.next=glb_head.next;
-		glb_head.next->prev=&(thd->head);
-		glb_head.next=&(thd->head);
+		Sys_delete_node(thd->head.prev,thd->head.next);
+
+		Sys_insert_node(&thd->head,&glb_head,glb_head.next);
 	}
 
 	/* Don't do any scheduling if we are scheduling to ourselves */
@@ -63,7 +59,16 @@ __lwt_schedule(lwt_t thd)
 
 	__lwt_dispatch(&(((lwt_t)info)->context),&(((lwt_t)(glb_head.next))->context));
 }
+/* End Function:__lwt_schedule ***********************************************/
 
+/* Begin Function:__lwt_trampoline ********************************************
+Description : Initialize
+			  context.sp - Stack pointer.
+			  context.ip - Instruction pointer.
+Input       : None.
+Output      : None.
+Return      : None.
+******************************************************************************/
 void LWT_INLINE
 __lwt_trampoline(void)
 {
@@ -73,20 +78,42 @@ __lwt_trampoline(void)
 	/* not used - empty function */
 	__lwt_dispatch(&context,&(((lwt_t)(glb_head.next))->context));
 }
+/* End Function: __lwt_trampoline*********************************************/
 
+/* Begin Function:__lwt_stack_get *********************************************
+Description : Allocates a new stack for a new lwt.
+Input       : None.
+Output      : A new stack.
+Return      : Pointer which points to the address of new stack.
+******************************************************************************/
 void* LWT_INLINE
 __lwt_stack_get(void)
 {
 	/* Always 5kB stack */
 	return malloc(5000);
 }
+/* End Function: __lwt_stack_get*********************************************/
 
+/* Begin Function:__lwt_stack_return******************************************
+Description : Not used - empty function.
+Input       : None.
+Output      : None.
+Return      : None.
+******************************************************************************/
 void LWT_INLINE
 __lwt_stack_return(void)
 {
 	/* not used - empty function */
 }
+/* End Function: __lwt_stack_return*******************************************/
 
+/* Begin Function:__lwt_stack_return*******************************************
+Description : Create a thread, this function calls the passed in fn
+              with the argument passed in as data.
+Input       : lwt_fn_t fn, void* data.
+Output      : lwt_t info -Thread we create.
+Return      : lwt_t info -Thread we create.
+*******************************************************************************/
 lwt_t LWT_INLINE
 lwt_create(lwt_fn_t fn, void* data)
 {
@@ -99,8 +126,7 @@ lwt_create(lwt_fn_t fn, void* data)
 
 		info=pool_head.next;
 
-		pool_head.next=pool_head.next->next;
-		pool_head.next->prev=&pool_head;
+		Sys_delete_node(&pool_head,pool_head.next->next);
 
 		info->entry=fn;
 
@@ -125,10 +151,8 @@ lwt_create(lwt_fn_t fn, void* data)
 #endif
 
 	/* put this thread into the last position of the queue */
-	info->head.prev=glb_head.prev;
-	info->head.next=&glb_head;
-	glb_head.prev->next=&(info->head);
-	glb_head.prev=&(info->head);
+
+	Sys_insert_node(&info->head,glb_head.prev,&glb_head);
 
 	/* do some stack init (safe redundancy 1000) */
 	info->context.sp=(((unsigned long)(info->init_stack))+5000-1000);
@@ -142,27 +166,41 @@ lwt_create(lwt_fn_t fn, void* data)
 
 	return info;
 }
+/* End Function: lwt_create****************************************************/
 
+/* Begin Function:__lwt_destroy*************************************************
+Description : Destroy a thread, free the memory or put it into pool_head so that
+              that thread can be reused quickly for new lwt create calls.
+Input       : lwt_t thd - thread we want to destroy.
+Output      : None.
+Return      : None.
+*******************************************************************************/
 void LWT_INLINE
 __lwt_destroy(lwt_t thd)
 {
 	/* remove this guy from whatever queue it is in now */
-	thd->head.prev->next=thd->head.next;
-	thd->head.next->prev=thd->head.prev;
+	Sys_delete_node(thd->head.prev,thd->head.next);
 
 
 #ifdef LWT_USE_POOL
-	thd->head.prev=pool_head.prev;
-	thd->head.next=&pool_head;
-	pool_head.prev->next=&(thd->head);
-	pool_head.prev=&(thd->head);
+
+	Sys_insert_node(&(thd->head),pool_head.prev,&pool_head);
 
 #else
 	free(thd->init_stack);
 	free(thd);
 #endif
 }
+/* End Function: __lwt_destroy*************************************************/
 
+
+/* Begin Function:lwt_join*****************************************************
+Description : It blocks waiting for the referenced lwt to terminate.
+Input       : lwt_t thd - The thread it waiting for.
+Output      : None.
+Return      : dead_retval - returns the void * that the thread itself
+returned from its lwt fn t, or that it passed to lwt die.
+******************************************************************************/
 void* LWT_INLINE
 lwt_join(lwt_t thd)
 {
@@ -185,13 +223,9 @@ lwt_join(lwt_t thd)
 	{
 		curr=(lwt_t)glb_head.next;
 		/* that guy is not dead. insert me into the waiting list and never execute me until... */
-		curr->head.prev->next=curr->head.next;
-		curr->head.next->prev=curr->head.prev;
+		Sys_delete_node(curr->head.prev,curr->head.next);
 
-		curr->head.prev=wait_head.prev;
-		curr->head.next=&wait_head;
-		wait_head.prev->next=&(curr->head);
-		wait_head.prev=&(curr->head);
+		Sys_insert_node(&curr->head,wait_head.prev,&wait_head);
 
 		curr->wait_id=thd->tid;
 
@@ -212,7 +246,14 @@ lwt_join(lwt_t thd)
 	/* return the value */
 	return dead_retval;
 }
+/* End Function: lwt_join*****************************************************/
 
+/* Begin Function:lwt_die******************************************************
+Description : Kill the current thread.
+Input       : void* data.
+Output      : None.
+Return      : None.
+******************************************************************************/
 void LWT_INLINE
 lwt_die(void* data)
 {
@@ -225,13 +266,10 @@ lwt_die(void* data)
 
 	thd=glb_head.next;
 	/* Insert me into the zombie queue */
-	thd->head.prev->next=thd->head.next;
-	thd->head.next->prev=thd->head.prev;
 
-	thd->head.prev=zombie_head.prev;
-	thd->head.next=&zombie_head;
-	zombie_head.prev->next=&(thd->head);
-	zombie_head.prev=&(thd->head);
+	Sys_delete_node(thd->head.prev,thd->head.next);
+
+	Sys_insert_node(&thd->head,zombie_head.prev,&zombie_head);
 
 	count_thd[LWT_INFO_NTHD_RUNNABLE]--;
 	count_thd[LWT_INFO_NTHD_ZOMBIES]++;
@@ -249,13 +287,10 @@ lwt_die(void* data)
 			thd=(lwt_t)trav_ptr;
 
 			/* put this guy to the last of the thread queue, we are beginning to schedule it */
-			thd->head.prev->next=thd->head.next;
-			thd->head.next->prev=thd->head.prev;
 
-			thd->head.prev=glb_head.prev;
-			thd->head.next=&glb_head;
-			glb_head.prev->next=&(thd->head);
-			glb_head.prev=&(thd->head);
+			Sys_delete_node(thd->head.prev,thd->head.next);
+
+			Sys_insert_node(&thd->head,glb_head.prev,&glb_head);
 
 			count_thd[LWT_INFO_NTHD_BLOCKED]--;
 			count_thd[LWT_INFO_NTHD_RUNNABLE]++;
@@ -272,32 +307,64 @@ lwt_die(void* data)
 	printf("error in die\n");
 	while(1);
 }
+/* End Function: lwt_die*************************************************/
 
+/* Begin Function:lwt_yield********************************************************
+Description : Yield the currently executing lwt, and possibly switch to another lwt
+Input       : lwt_t thd - Attempts to switch directly to the specified lwt.
+Output      : None.
+Return      : ((lwt_t)glb_head.next)->tid - Id of next thread.
+***********************************************************************************/
 int LWT_INLINE
 lwt_yield(lwt_t thd)
 {
 	__lwt_schedule(thd);
 	return ((lwt_t)glb_head.next)->tid;
 }
+/* End Function: lwt_yield********************************************************/
 
-
+/* Begin Function:lwt_current******************************************************
+Description : Return the currently active thread.
+Input       : None.
+Output      : None.
+Return      : (lwt_t)glb_head.next.
+***********************************************************************************/
 lwt_t LWT_INLINE
 lwt_current(void)
 {
 	return (lwt_t)glb_head.next;
 }
+/* End Function: lwt_current*******************************************************/
 
+/* Begin Function:lwt_id************************************************************
+Description : Return the unique identifier for the thread.
+Input       : None.
+Output      : None.
+Return      : thd->tid.
+***********************************************************************************/
 int LWT_INLINE
 lwt_id(lwt_t thd)
 {
 	return thd->tid;
 }
+/* End Function: lwt_id***********************************************************/
 
+/* Begin Function:lwt_info********************************************************
+Description :  A debugging helper.
+               lwt info t is an enum including
+               LWT INFO NTHD RUNNABLE, LWT INFO NTHD BLOCKED, LWT INFO NTHD ZOMBIES.
+               Depending on which of these is passed in, lwt info returns the number
+               of threads that are either runnable,blocked or that have died.
+Input       : None.
+Output      : None.
+Return      : count_thd[t].
+**********************************************************************************/
 int LWT_INLINE
 lwt_info(lwt_info_t t)
 {
 	return count_thd[t];
 }
+/* End Function: lwt_info*********************************************************/
 
 /*
 void func1(void* data)
@@ -342,17 +409,7 @@ main(void)
 {
 	lwt_t thread1;
 
-	glb_head.prev=&glb_head;
-	glb_head.next=&glb_head;
-
-	wait_head.prev=&wait_head;
-	wait_head.next=&wait_head;
-
-	zombie_head.prev=&zombie_head;
-	zombie_head.next=&zombie_head;
-
-	pool_head.prev=&pool_head;
-	pool_head.next=&pool_head;
+    Sys_init_list();
 
 	thread1=lwt_create(test,1234);
 
