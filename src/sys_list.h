@@ -22,8 +22,8 @@ Referred to : kernel.c,kernel.h
 ******************************************************************************/
 struct list_head
 {
-	struct list_head* prev;
-	struct list_head* next;
+    struct list_head* prev;
+    struct list_head* next;
 };
 /* End Struct: list_head *****************************************************/
 
@@ -37,10 +37,10 @@ struct list_head pool_head;
 
 /* Public C Function Prototypes **********************************************/
 /*****************************************************************************/
-void Sys_init_list();
-void Sys_create_list(struct list_head* Head);
-void Sys_delete_node(struct list_head* prev,struct list_head* next);
-void Sys_insert_node(struct list_head* new_node,struct list_head* prev,struct list_head* next);
+void sys_init_list();
+void sys_create_list(struct list_head* Head);
+void sys_delete_node(struct list_head* prev,struct list_head* next);
+void sys_insert_node(struct list_head* new_node,struct list_head* prev,struct list_head* next);
 /*****************************************************************************/
 /* End Public C Function Prototypes ******************************************/
 
