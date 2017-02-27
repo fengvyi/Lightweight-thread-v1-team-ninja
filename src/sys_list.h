@@ -37,7 +37,6 @@ struct list_head pool_head;
 
 /* Public C Function Prototypes **********************************************/
 /*****************************************************************************/
-void sys_init_list();
 void sys_create_list(struct list_head* Head);
 void sys_delete_node(struct list_head* prev,struct list_head* next);
 void sys_insert_node(struct list_head* new_node,struct list_head* prev,struct list_head* next);
