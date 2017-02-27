@@ -315,8 +315,8 @@ lwt_info(lwt_info_t t)
 
 /* Begin Function:__lwt_start ********************************************
 Description : Initialize
-			  context.sp - Stack pointer.
-			  context.ip - Instruction pointer.
+              context.sp - Stack pointer.
+              context.ip - Instruction pointer.
 Input       : None.
 Output      : None.
 Return      : None.
