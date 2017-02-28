@@ -2,7 +2,8 @@
 #include <stdlib.h>
 #include <assert.h>
 
-#include  "lwt.h"
+#include "lwt.h"
+#include "debug.h"
 
 #define rdtscll(val) __asm__ __volatile__("rdtsc" : "=A" (val))
 
@@ -19,14 +20,30 @@
 
 /*
  * Our output on
+ * Vmware on Surface Pro4 without Thread pool
+ * Intel Core i5-6300U CPU @ 2.40GHz:
+ *
+ * [PERF] 502 <- fork/join
+ * [PERF] 17 <- yield
+ * [TEST] thread creation/join/scheduling
+ */
+
+
+/*
+ * Our output on
  * Vmware on Surface Pro4 with Thread pool
  * Intel Core i5-6300U CPU @ 2.40GHz:
  *
- *[PERF]   125 <- fork/join
- *[PERF]    21 <- yield
- *[TEST] thread creation/join/scheduling
- *[PERF]    68 <- snd+rcv (buffer size 0)
+ * [PERF] 199 <- fork/join
+ * [PERF] 17 <- yield
+ * [TEST] thread creation/join/scheduling
  */
+
+
+
+
+
+
 
 void *
 fn_bounce(void *d) 
@@ -49,7 +66,9 @@ fn_bounce(void *d)
 
 void *
 fn_null(void *d)
-{ return NULL; }
+{
+	return NULL;
+}
 
 #define IS_RESET()						\
         assert( lwt_info(LWT_INFO_NTHD_RUNNABLE) == 1 &&	\
@@ -59,10 +78,10 @@ fn_null(void *d)
 void
 test_perf(void)
 {
+
 	lwt_t chld1, chld2;
 	int i;
 	unsigned long long start, end;
-
 
 	/* Performance tests */
 	rdtscll(start);
@@ -83,7 +102,9 @@ test_perf(void)
 
 void *
 fn_identity(void *d)
-{ return d; }
+{
+	return d;
+}
 
 void *
 fn_nested_joins(void *d)
@@ -98,6 +119,9 @@ fn_nested_joins(void *d)
 	}
 	chld = lwt_create(fn_nested_joins, (void*)1);
 	lwt_join(chld);
+
+
+	return NULL;
 }
 
 volatile int sched[2] = {0, 0};
@@ -127,6 +151,8 @@ fn_join(void *d)
 
 	r = lwt_join(d);
 	assert(r == (void*)0x37337);
+
+	return NULL;
 }
 
 void
@@ -142,7 +168,7 @@ test_crt_join_sched(void)
 	chld1 = lwt_create(fn_sequence, (void*)1);
 	chld2 = lwt_create(fn_sequence, (void*)2);
 	lwt_join(chld2);
-	lwt_join(chld1);
+	lwt_join(chld1);	
 	IS_RESET();
 
 	/* functional tests: join */
@@ -165,9 +191,9 @@ test_crt_join_sched(void)
 	lwt_yield(LWT_NULL);
 	lwt_yield(LWT_NULL);
 	lwt_join(chld2);
-	lwt_join(chld1);
+	//lwt_join(chld1);
 	IS_RESET();
-
+	printf("[TEST] thread creation/join/scheduling\n");
 	/* functional tests: passing data between threads */
 	chld1 = lwt_create(fn_identity, (void*)0x37337);
 	assert((void*)0x37337 == lwt_join(chld1));
@@ -179,58 +205,13 @@ test_crt_join_sched(void)
 	assert(lwt_info(LWT_INFO_NTHD_ZOMBIES) == 1);
 	lwt_join(chld1);
 	IS_RESET();
-}
-
-void *
-fn_chan(lwt_chan_t to)
-{
-	lwt_chan_t from;
-	int i;
-	
-	from = lwt_chan(0);
-	lwt_snd_chan(to, from);
-	assert(from->snd_cnt);
-	for (i = 0 ; i < ITER ; i++) {
-		lwt_snd(to, (void*)1);
-		assert(2 == (int)lwt_rcv(from));
-	}
-	lwt_chan_deref(from);
-	
-	return NULL;
+	printf("[TEST] thread creation/join/scheduling\n");
 }
 
 void
-test_perf_channels(int chsz)
-{
-	lwt_chan_t from, to;
-	lwt_t t;
-	int i;
-	unsigned long long start, end;
-
-	assert(LWT_RUNNING == lwt_current()->state);
-	from = lwt_chan(chsz);
-	assert(from);
-	t    = lwt_create_chan(fn_chan, from);
-	to   = lwt_rcv_chan(from);
-	assert(to->snd_cnt);
-	rdtscll(start);
-	for (i = 0 ; i < ITER ; i++) {
-		assert(1 == (int)lwt_rcv(from));
-		lwt_snd(to, (void*)2);
-	}
-	lwt_chan_deref(to);
-	rdtscll(end);
-	printf("[PERF] %5lld <- snd+rcv (buffer size %d)\n", 
-	       (end-start)/(ITER*2), chsz);
-	lwt_join(t);
-}
-
-int
-ipc_test(void)
+test(void* param)
 {
 	test_perf();
 	test_crt_join_sched();
-	test_perf_channels(0);
-    exit(0);
 	return 0;
 }

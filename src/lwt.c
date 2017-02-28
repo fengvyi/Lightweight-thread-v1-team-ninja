@@ -15,8 +15,6 @@
  */
 
 /* Config Includes ***********************************************************/
-#include <stdio.h>
-#include <stdlib.h>
 #include "lwt.h"
 #include "debug.h"
 /* End Config Includes *******************************************************/
@@ -27,6 +25,7 @@ s32 cur_tid=1;
 s32 glb_thd_num=0;
 s32 count_lwt_info[INFO_SIZE];
 /* End Public Global Variables ***********************************************/
+
 
 /* Begin Function:__lwt_schedule *********************************************
 Description : Switch to another thread.
@@ -42,7 +41,8 @@ __lwt_schedule(lwt_t thd)
     /* put the current guy at the end of the queue */
     info=glb_head.next;
     sys_delete_node(&glb_head,glb_head.next->next);
-    sys_insert_node(info,&glb_head,glb_head.next);
+    sys_insert_node(info,glb_head.prev,&glb_head);
+
 
     if(thd!=NULL)
     {
@@ -55,7 +55,7 @@ __lwt_schedule(lwt_t thd)
     if(info==glb_head.next)
     return;
 
-    __lwt_dispatch(&(((lwt_t)info)->context),&(((lwt_t)(glb_head.next))->context));
+    __lwt_dispatch(&((list_to_lwt_t(info))->context),&((list_to_lwt_t(glb_head.next))->context));
 }
 /* End Function:__lwt_schedule ***********************************************/
 
@@ -71,7 +71,7 @@ __lwt_trampoline(void)
 
   lwt_current()->entry(lwt_current()->data);
 
-  ((lwt_t)glb_head.next)->retval=lwt_current()->data;
+  (list_to_lwt_t(glb_head.next))->retval=lwt_current()->data;
 
   lwt_die(0);
 
@@ -88,7 +88,7 @@ void*
 __lwt_stack_get(void)
 {
     /* Always 5kB stack */
-    return malloc(5000);
+    return malloc(STACK_SIZE);
 }
 /* End Function: __lwt_stack_get*********************************************/
 
@@ -111,7 +111,7 @@ lwt_create(lwt_fn_t fn, void* data)
     sys_insert_node(&info->head,glb_head.prev,&glb_head);
 
     /* do some stack init (safe redundancy 1000) */
-    info->context.sp=(((u32)(info->init_stack))+5000-1000);
+    info->context.sp=(((u32)(info->init_stack))+STACK_SIZE-SAFE_REDUNDANCY);
     *((void**)(info->context.sp)+1)=data;
     info->context.ip=__lwt_trampoline;
     info->data=data;
@@ -120,6 +120,12 @@ lwt_create(lwt_fn_t fn, void* data)
     glb_thd_num++;
     count_lwt_info[LWT_INFO_NTHD_RUNNABLE]++;
     info->tid=glb_thd_num;
+
+    if(glb_thd_num==1)
+    	info->ptid=0;
+    else
+    	info->ptid=list_to_lwt_t((glb_head.next))->tid;
+
     info->wait_id=0;
 
     return info;
@@ -159,10 +165,11 @@ lwt_join(lwt_t thd)
     /* go through the zombie list to see if that guy have already dead. */
     struct list_head* trav_ptr;
     trav_ptr=zombie_head.next;
+    curr=list_to_lwt_t(glb_head.next);
 
     while(trav_ptr!=&zombie_head)
     {
-        if(((lwt_t)trav_ptr)->tid==thd->tid)
+        if((list_to_lwt_t(trav_ptr))->tid==thd->tid)
         break;
 
         trav_ptr=trav_ptr->next;
@@ -170,7 +177,9 @@ lwt_join(lwt_t thd)
 
     if(trav_ptr==&zombie_head)
     {
-        curr=(lwt_t)glb_head.next;
+    	if(thd->ptid!=curr->tid)
+    		return -1;
+
         /* that guy is not dead. insert me into the waiting list and never execute me until... */
         sys_delete_node(curr->head.prev,curr->head.next);
         sys_insert_node(&curr->head,wait_head.prev,&wait_head);
@@ -180,16 +189,18 @@ lwt_join(lwt_t thd)
         count_lwt_info[LWT_INFO_NTHD_BLOCKED]++;
         count_lwt_info[LWT_INFO_NTHD_RUNNABLE]--;
 
-        __lwt_dispatch(&(curr->context),&(((lwt_t)(glb_head.next))->context));
+        __lwt_dispatch(&(curr->context),&((list_to_lwt_t(glb_head.next))->context));
         /* I'm invoked by somebody. must be that guy. */
 	}
 
     dead_retval=thd->data;
 
     /* destroy this zombie, we already have its data */
-    __lwt_destroy((lwt_t)thd);
-
-    count_lwt_info[LWT_INFO_NTHD_ZOMBIES]--;
+    if(thd->ptid==curr->tid)
+    {
+		__lwt_destroy(thd);
+		count_lwt_info[LWT_INFO_NTHD_ZOMBIES]--;
+    }
 
     /* return the value */
     return dead_retval;
@@ -212,7 +223,7 @@ lwt_die(void* data)
     struct list_head* trav_ptr;
     lwt_t thd;
 
-    thd=glb_head.next;
+    thd=list_to_lwt_t(glb_head.next);
     /* Insert me into the zombie queue */
     sys_delete_node(thd->head.prev,thd->head.next);
     sys_insert_node(&thd->head,zombie_head.prev,&zombie_head);
@@ -226,11 +237,11 @@ lwt_die(void* data)
 
     while(trav_ptr!=&wait_head)
     {
-        if(((lwt_t)trav_ptr)->wait_id==thd->tid)
+        if((list_to_lwt_t(trav_ptr))->wait_id==thd->tid)
         {
-            ((lwt_t)trav_ptr)->retval=data;
+            (list_to_lwt_t(trav_ptr))->retval=data;
 
-            thd=(lwt_t)trav_ptr;
+            thd=list_to_lwt_t(trav_ptr);
 
             /* put this guy to the last of the thread queue, we are beginning to schedule it */
             sys_delete_node(thd->head.prev,thd->head.next);
@@ -245,7 +256,7 @@ lwt_die(void* data)
     }
 
     /* yield now, never execute me anymore */
-    __lwt_dispatch(&(((lwt_t)(zombie_head.prev))->context),&(((lwt_t)(glb_head.next))->context));
+    __lwt_dispatch(&((list_to_lwt_t(zombie_head.prev))->context),&((list_to_lwt_t(glb_head.next))->context));
 
     /* should never reach here */
     printf("error in die\n");
@@ -257,14 +268,14 @@ lwt_die(void* data)
 Description : Yield the currently executing lwt, and possibly switch to another lwt
 Input       : lwt_t thd - Attempts to switch directly to the specified lwt.
 Output      : None.
-Return      : ((lwt_t)glb_head.next)->tid - Id of next thread.
+Return      : (list_to_lwt_t(glb_head.next))->tid - Id of next thread.
 ***********************************************************************************/
 s32
 lwt_yield(lwt_t thd)
 {
     __lwt_schedule(thd);
 
-    return ((lwt_t)glb_head.next)->tid;
+    return (list_to_lwt_t(glb_head.next))->tid;
 }
 /* End Function: lwt_yield********************************************************/
 
@@ -272,12 +283,12 @@ lwt_yield(lwt_t thd)
 Description : Return the currently active thread.
 Input       : None.
 Output      : None.
-Return      : (lwt_t)glb_head.next.
+Return      : list_to_lwt_t(glb_head.next).
 ***********************************************************************************/
 lwt_t
 lwt_current(void)
 {
-	lwt_t cur=(lwt_t)(glb_head.next);
+	lwt_t cur=list_to_lwt_t(glb_head.next);
 	cur->state=LWT_RUNNING;
     return cur;
 }
@@ -328,7 +339,7 @@ __lwt_start(void)
     context.sp=(u32)&context;
     context.ip=(u32)__lwt_trampoline;
     /* not used - empty function */
-    __lwt_dispatch(&context,&(((lwt_t)(glb_head.next))->context));
+    __lwt_dispatch(&context,&((list_to_lwt_t(glb_head.next))->context));
 
 }
 /* End Function: __lwt_start*********************************************/
@@ -339,13 +350,13 @@ Input       : None.
 Output      : None.
 Return      : lwt_chan_t - The pointer to the channel created.
 ******************************************************************************/
-lwt_chan_t lwt_chan(int sz)
+lwt_chan_t lwt_chan(s32 sz)
 {
 	lwt_chan_t chan;
 	chan=malloc(sizeof(struct lwt_channel));
 	chan->buf_size=sz;
 	chan->snd_cnt=0;
-	chan->rcv_data=(lwt_t)(glb_head.next);
+	chan->rcv_data=list_to_lwt_t(glb_head.next);
 	sys_create_list(&chan->sending);
 	sys_create_list(&chan->receiving);
 	count_lwt_info[LWT_INFO_NCHAN]++;
@@ -367,7 +378,7 @@ void lwt_chan_deref(lwt_chan_t c)
 	}
 	else
 	{
-		if((lwt_t)glb_head.next==c->rcv_data)
+		if(list_to_lwt_t(glb_head.next)==c->rcv_data)
 			c->rcv_data=0;
 		else
 			c->snd_cnt--;
@@ -380,9 +391,9 @@ Description : Send something to one channel.
 Input       : lwt_chan_t c - The channel to send to.
               void* data - The data to send.
 Output      : None.
-Return      : int - 0 for success, -1 for failure.
+Return      : s32 - 0 for success, -1 for failure.
 ******************************************************************************/
-int lwt_snd(lwt_chan_t c, void* data)
+s32 lwt_snd(lwt_chan_t c, void* data)
 {
 	lwt_t sndrcv_thd;
 	/* See if there are any receivers in the channel */
@@ -393,7 +404,7 @@ int lwt_snd(lwt_chan_t c, void* data)
 	if((c->receiving.next)!=&(c->receiving))
 	{
 		/* Yes. invoke that guy and don't block */
-		sndrcv_thd=(lwt_t)(c->receiving.next);
+		sndrcv_thd=list_to_lwt_t(c->receiving.next);
 		sys_delete_node(sndrcv_thd->head.prev,sndrcv_thd->head.next);
 		sys_insert_node(&(sndrcv_thd->head),glb_head.prev,&glb_head);
 		sndrcv_thd->sndrcv_data=data;
@@ -402,7 +413,7 @@ int lwt_snd(lwt_chan_t c, void* data)
 	}
 	else
 	{
-		sndrcv_thd=(lwt_t)glb_head.next;
+		sndrcv_thd=list_to_lwt_t(glb_head.next);
 		/* Nobody is receiving. Now we just block */
 		sys_delete_node(sndrcv_thd->head.prev,sndrcv_thd->head.next);
 		sys_insert_node(&(sndrcv_thd->head),c->sending.prev,&(c->sending));
@@ -410,7 +421,7 @@ int lwt_snd(lwt_chan_t c, void* data)
 		sndrcv_thd->sndrcv_len=c->buf_size;
 		count_lwt_info[LWT_INFO_NSNDING]++;
 
-		__lwt_dispatch(&(sndrcv_thd->context),&(((lwt_t)(glb_head.next))->context));
+		__lwt_dispatch(&(sndrcv_thd->context),&((list_to_lwt_t(glb_head.next))->context));
 	}
 
 	return 0;
@@ -435,7 +446,7 @@ lwt_rcv(lwt_chan_t c)
 	if((c->sending.next)!=&(c->sending))
 	{
 		/* Yes. invoke that guy and don't block */
-		sndrcv_thd=(lwt_t)(c->sending.next);
+		sndrcv_thd=list_to_lwt_t(c->sending.next);
 		sys_delete_node(sndrcv_thd->head.prev,sndrcv_thd->head.next);
 		sys_insert_node(&(sndrcv_thd->head),glb_head.prev,&glb_head);
 		count_lwt_info[LWT_INFO_NSNDING]--;
@@ -443,13 +454,14 @@ lwt_rcv(lwt_chan_t c)
 	}
 	else
 	{
-		sndrcv_thd=(lwt_t)glb_head.next;
+		sndrcv_thd=list_to_lwt_t(glb_head.next);
 		/* Nobody is receiving. Now we just block */
 		sys_delete_node(sndrcv_thd->head.prev,sndrcv_thd->head.next);
 		sys_insert_node(&(sndrcv_thd->head),c->receiving.prev,&(c->receiving));
 		count_lwt_info[LWT_INFO_NRCVING]++;
+		c->snd_cnt++;
 
-		__lwt_dispatch(&(sndrcv_thd->context),&(((lwt_t)(glb_head.next))->context));
+		__lwt_dispatch(&(sndrcv_thd->context),&((list_to_lwt_t(glb_head.next))->context));
 	}
 
 	return sndrcv_thd->sndrcv_data;
@@ -461,7 +473,7 @@ Description : Create a thread and send the channel as a parameter.
 Input       : lwt_chan_t c - The channel to send to.
               void* data - The data to send.
 Output      : None.
-Return      : int - 0 for success, -1 for failure.
+Return      : s32 - 0 for success, -1 for failure.
 ******************************************************************************/
 lwt_t
 lwt_create_chan(lwt_fn_t fn, lwt_chan_t c)
@@ -476,41 +488,17 @@ Description : Send channel to one channel (sending is sent over c).
 Input       : lwt_chan_t c - The channel to send to.
               lwt_chan_t sending- The channel to send.
 Output      : None.
-Return      : int - 0 for success, -1 for failure.
+Return      : s32 - 0 for success, -1 for failure.
 ******************************************************************************/
-int
+s32
 lwt_snd_chan(lwt_chan_t c,lwt_chan_t sending)
 {
-	lwt_t sndrcv_thd;
 	/* See if there are any receivers in the channel */
-	if(c->rcv_data==0)
-		return -1;
+		if(c->rcv_data==0)
+			return -1;
 
-	/* Anyone currently receiving? */
-	if((c->receiving.next)!=&(c->receiving))
-	{
-		/* Yes. invoke that guy and don't block */
-		sndrcv_thd=(lwt_t)(c->receiving.next);
-		sys_delete_node(sndrcv_thd->head.prev,sndrcv_thd->head.next);
-		sys_insert_node(&(sndrcv_thd->head),glb_head.prev,&glb_head);
-		sndrcv_thd->sndrcv_data=sending;
-		sndrcv_thd->sndrcv_len=sizeof(struct lwt_channel);
-		count_lwt_info[LWT_INFO_NRCVING]--;
+	lwt_snd(c,sending);
 
-	}
-	else
-	{
-		sndrcv_thd=(lwt_t)glb_head.next;
-		/* Nobody is receiving. Now we just block */
-		sys_delete_node(sndrcv_thd->head.prev,sndrcv_thd->head.next);
-		sys_insert_node(&(sndrcv_thd->head),c->sending.prev,&(c->sending));
-		sndrcv_thd->sndrcv_data=sending;
-		sndrcv_thd->sndrcv_len=sizeof(struct lwt_channel);
-		count_lwt_info[LWT_INFO_NSNDING]++;
-
-
-		__lwt_dispatch(&(sndrcv_thd->context),&(((lwt_t)(glb_head.next))->context));
-	}
 	sending->snd_cnt++;
 
 	return 0;
@@ -527,51 +515,26 @@ Return      : lwt_chan_t - received channel.
 lwt_chan_t
 lwt_rcv_chan(lwt_chan_t c)
 {
-	lwt_t sndrcv_thd;
-	/* See if there are any senders in the channel */
-	if(c->snd_cnt==0)
-		return -1;
-
-	/* Anyone currently sending? */
-	if((c->sending.next)!=&(c->sending))
-	{
-		/* Yes. invoke that guy and don't block */
-		sndrcv_thd=(lwt_t)(c->sending.next);
-		sys_delete_node(sndrcv_thd->head.prev,sndrcv_thd->head.next);
-		sys_insert_node(&(sndrcv_thd->head),glb_head.prev,&glb_head);
-		return (void*)sndrcv_thd->sndrcv_data;
-		count_lwt_info[LWT_INFO_NSNDING]--;
-	}
-	else
-	{
-		sndrcv_thd=(lwt_t)glb_head.next;
-		/* Nobody is receiving. Now we just block */
-		sys_delete_node(sndrcv_thd->head.prev,sndrcv_thd->head.next);
-		sys_insert_node(&(sndrcv_thd->head),c->receiving.prev,&(c->receiving));
-		count_lwt_info[LWT_INFO_NRCVING]++;
-		c->snd_cnt++;
-
-		__lwt_dispatch(&(sndrcv_thd->context),&(((lwt_t)(glb_head.next))->context));
-	}
-
-	return sndrcv_thd->sndrcv_data;
+	return lwt_rcv(c);
 
 }
 /* End Function:lwt_rcv_chan ***************************************************/
 
-int test2(void* data)
+
+
+s32 test2(void* data)
 {
-	int* myvar=malloc(4);
+	s32* myvar=malloc(4);
 	*myvar=1234;
 	lwt_snd(data,myvar);
 	return 0;
 }
 
-int test(void* data)
+s32 test(void* data)
 {
 	lwt_chan_t channel=lwt_chan(4);
 	lwt_t sender=lwt_create_chan(test2,channel);
-	int* myvar=lwt_rcv(channel);
+	s32* myvar=lwt_rcv(channel);
 	printf("I received %d\n",*myvar);
 	free(myvar);
 	lwt_join(sender);
@@ -580,7 +543,7 @@ int test(void* data)
 
 
 
-int
+s32
 main(void)
 {
     lwt_t thread1;

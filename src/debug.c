@@ -47,7 +47,7 @@ lwt_create_by_condition(lwt_t info,lwt_fn_t fn)
 
 	if(pool_head.next!=&pool_head){
 
-		info=pool_head.next;
+		info=list_to_lwt_t(pool_head.next);
 
 		sys_delete_node(&pool_head,pool_head.next->next);
 
@@ -55,7 +55,7 @@ lwt_create_by_condition(lwt_t info,lwt_fn_t fn)
 
 	}else{
 
-	info=malloc(64/*sizeof(struct lwt_info_struct)*/);
+	info=malloc(sizeof(struct lwt_info_struct));
 
 	/* TODO:check if info allocation is successful */
 

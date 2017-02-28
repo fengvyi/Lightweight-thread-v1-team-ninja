@@ -12,7 +12,6 @@
 #ifndef DEBUG_H_
 #define DEBUG_H_
 #define LWT_USE_POOL
-#define DEBUG_MODE_ON
 /* End Defines ***************************************************************/
 
 /* Config Includes ***********************************************************/
