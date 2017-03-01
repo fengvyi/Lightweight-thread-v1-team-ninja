@@ -54,10 +54,10 @@ typedef enum
     LWT_INFO_NTHD_RUNNABLE = 0,
     LWT_INFO_NTHD_BLOCKED  = 1,
     LWT_INFO_NTHD_ZOMBIES  = 2,
-	LWT_INFO_NCHAN = 3,
-	LWT_INFO_NSNDING = 4,
-	LWT_INFO_NRCVING = 5,
-	LWT_RUNNING = 6,
+    LWT_INFO_NCHAN = 3,
+    LWT_INFO_NSNDING = 4,
+    LWT_INFO_NRCVING = 5,
+    LWT_RUNNING = 6,
     INFO_SIZE
 } lwt_info_t;
 /* End Typedef ***************************************************************/
