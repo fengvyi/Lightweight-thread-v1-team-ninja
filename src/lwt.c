@@ -522,25 +522,6 @@ lwt_rcv_chan(lwt_chan_t c)
 
 
 
-s32 test2(void* data)
-{
-	s32* myvar=malloc(4);
-	*myvar=1234;
-	lwt_snd(data,myvar);
-	return 0;
-}
-
-s32 test(void* data)
-{
-	lwt_chan_t channel=lwt_chan(4);
-	lwt_t sender=lwt_create_chan(test2,channel);
-	s32* myvar=lwt_rcv(channel);
-	printf("I received %d\n",*myvar);
-	free(myvar);
-	lwt_join(sender);
-	exit(0);
-}
-
 
 
 s32
