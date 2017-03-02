@@ -365,10 +365,10 @@ lwt_chan_t lwt_chan(s32 sz)
 /* End Function:lwt_chan *****************************************************/
 
 /* Begin Function:lwt_chan_deref **********************************************
-Description : Allocate a lwt channel. The channel number always increases.
+Description : Try to derefernce a lwt channel.
 Input       : None.
 Output      : None.
-Return      : count_lwt_info[t].
+Return      : None.
 ******************************************************************************/
 void lwt_chan_deref(lwt_chan_t c)
 {
