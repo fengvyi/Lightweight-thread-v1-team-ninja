@@ -27,6 +27,7 @@
         (type *)( (char *)__mptr - offsetof(type,member) );})
 
 #define list_to_lwt_t(x) container_of(x,struct lwt_info_struct,head)
+#define list_to_chan_t(x) container_of(x,struct lwt_channel,head)
 /* End Defines ***************************************************************/
 
 
@@ -34,7 +35,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "sys_list.h"
-#include "lwt_dispatch.h"
 /* End Config Includes *******************************************************/
 
 /* Typedef *******************************************************************/
@@ -54,10 +54,12 @@ typedef enum
     LWT_INFO_NTHD_RUNNABLE = 0,
     LWT_INFO_NTHD_BLOCKED  = 1,
     LWT_INFO_NTHD_ZOMBIES  = 2,
-    LWT_INFO_NCHAN = 3,
-    LWT_INFO_NSNDING = 4,
-    LWT_INFO_NRCVING = 5,
-    LWT_RUNNING = 6,
+	LWT_INFO_NCHAN = 3,
+	LWT_INFO_NSNDING = 4,
+	LWT_INFO_NRCVING = 5,
+	LWT_RUNNING = 6,
+	LWT_INFO_NCGRP=7,
+	LWT_INFO_NRCVGRPING=8,
     INFO_SIZE
 } lwt_info_t;
 /* End Typedef ***************************************************************/
@@ -66,6 +68,10 @@ typedef enum
 /* Begin Struct: lwt_info_struct **********************************************
 Description : The informations of a thread.
 ******************************************************************************/
+struct lwt_context {
+	unsigned long ip, sp;
+};
+
 struct lwt_info_struct
 {
     struct list_head head;
@@ -82,24 +88,80 @@ struct lwt_info_struct
     s32 state;
 };
 
+struct lwt_channel_group
+{
+	/* The list head for non-pending events */
+	struct list_head idle_head;
+	struct list_head pend_head;
+	/* If the receiver is blocked, it will be here */
+	struct list_head recv_head;
+	s32 chan_cnt;
+	s32 pend_cnt;
+	/* The receiver of the channel group - must be the same as the channels */
+	struct lwt_info_struct* rcv_data;
+};
+
 struct lwt_channel
 {
+	/* This head is for lwt_list */
+	struct list_head head;
+	/* This is for the lwt channel grouping */
+	struct lwt_channel_group* chgp;
+	/* Blocked counter */
+	s32 blocked_num;
+	/* Associated mark */
+	void* mark;
 	s32 buf_size;
 	/* Reference counting - the number of senders and receivers */
 	s32 snd_cnt;
 	/* The receiver of the channel */
 	struct lwt_info_struct* rcv_data;
-
 	/* The threads that are currently receiving, but nobody have called send */
 	struct list_head receiving;
 	/* The threads that are currently sending, but nobody have called receive */
 	struct list_head sending;
 };
+
+
+
+static void LWT_INLINE
+__lwt_dispatch(struct lwt_context *curr, struct lwt_context *next){
+	__asm__ __volatile__(
+	"pusha \n\t"
+	"movl %%esp, %0 \n\t"
+	"movl $1f, %1 \n\t"
+	"movl %2, %%esp \n\t"
+	"jmp *%3 \n\t"
+	"1: popa \n\t"
+	:"=m"(curr->sp), "=m"(curr->ip)
+	:"m"(next->sp), "m"(next->ip)
+	:
+	);
+}
+
+
+/*
+static void LWT_INLINE
+__lwt_dispatch(struct lwt_context *curr, struct lwt_context *next){
+	__asm__ __volatile__(
+	"pusha \n\t"
+	"movl %%esp, %0 \n\t"
+	"movl $1f, %1 \n\t"
+	"movl %2, %%esp \n\t"
+	"movl %3, %%ebx \n\t"
+	"jmp *%%ebx \n\t"
+	"1: popa \n\t"
+	:"=m"(curr->sp), "=m"(curr->ip)
+	:"r"(next->sp), "r"(next->ip)
+	:"eax","ebx"
+	);
+}*/
 /* End Struct: lwt_info_struct ************************************************/
 
 /* Typedef *******************************************************************/
 typedef struct lwt_channel* lwt_chan_t;
 typedef struct lwt_info_struct* lwt_t;
+typedef struct lwt_channel_group* lwt_cgrp_t;
 /* End Typedef ***************************************************************/
 
 /* Public C Function Prototypes **********************************************/

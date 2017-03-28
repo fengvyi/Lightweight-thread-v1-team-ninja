@@ -307,6 +307,7 @@ lwt_id(lwt_t thd)
 }
 /* End Function: lwt_id*******************************************************/
 
+
 /* Begin Function:lwt_info*****************************************************
 Description :  A debugging helper.
                lwt info t is an enum including
@@ -354,8 +355,12 @@ lwt_chan_t lwt_chan(s32 sz)
 {
 	lwt_chan_t chan;
 	chan=malloc(sizeof(struct lwt_channel));
+	sys_create_list(&(chan->head));
+	chan->chgp=NULL;
 	chan->buf_size=sz;
 	chan->snd_cnt=0;
+	chan->blocked_num=0;
+	chan->mark=NULL;
 	chan->rcv_data=list_to_lwt_t(glb_head.next);
 	sys_create_list(&chan->sending);
 	sys_create_list(&chan->receiving);
@@ -365,10 +370,10 @@ lwt_chan_t lwt_chan(s32 sz)
 /* End Function:lwt_chan *****************************************************/
 
 /* Begin Function:lwt_chan_deref **********************************************
-Description : Try to derefernce a lwt channel.
+Description : Allocate a lwt channel. The channel number always increases.
 Input       : None.
 Output      : None.
-Return      : None.
+Return      : count_lwt_info[t].
 ******************************************************************************/
 void lwt_chan_deref(lwt_chan_t c)
 {
@@ -396,6 +401,7 @@ Return      : s32 - 0 for success, -1 for failure.
 s32 lwt_snd(lwt_chan_t c, void* data)
 {
 	lwt_t sndrcv_thd;
+	lwt_t grprcv_thd;
 	/* See if there are any receivers in the channel */
 	if(c->rcv_data==0)
 		return -1;
@@ -410,6 +416,7 @@ s32 lwt_snd(lwt_chan_t c, void* data)
 		sndrcv_thd->sndrcv_data=data;
 		sndrcv_thd->sndrcv_len=c->buf_size;
 		count_lwt_info[LWT_INFO_NRCVING]--;
+		count_lwt_info[LWT_INFO_NTHD_RUNNABLE]++;
 	}
 	else
 	{
@@ -419,7 +426,28 @@ s32 lwt_snd(lwt_chan_t c, void* data)
 		sys_insert_node(&(sndrcv_thd->head),c->sending.prev,&(c->sending));
 		sndrcv_thd->sndrcv_data=data;
 		sndrcv_thd->sndrcv_len=c->buf_size;
+		count_lwt_info[LWT_INFO_NTHD_RUNNABLE]--;
 		count_lwt_info[LWT_INFO_NSNDING]++;
+
+		/* See if this guy is in any channel group. If yes, we just put this into the channel group's
+		 * pending list.
+		 */
+		if((c->chgp!=0)&&(c->blocked_num==0))
+		{
+			sys_delete_node(c->head.prev,c->head.next);
+			sys_insert_node(&(c->head),c->chgp->pend_head.prev,&(c->chgp->pend_head));
+			c->chgp->pend_cnt++;
+			/* Check if there is a thread pending on this channel group. If there is, wake it up */
+			if(c->chgp->pend_head.next!=&(c->chgp->pend_head))
+			{
+				grprcv_thd=list_to_lwt_t(c->chgp->pend_head.next);
+				sys_delete_node(grprcv_thd->head.prev,grprcv_thd->head.next);
+				sys_insert_node(&(grprcv_thd->head),glb_head.prev,&glb_head);
+				count_lwt_info[LWT_INFO_NRCVGRPING]--;
+				count_lwt_info[LWT_INFO_NTHD_RUNNABLE]++;
+			}
+		}
+		c->blocked_num++;
 
 		__lwt_dispatch(&(sndrcv_thd->context),&((list_to_lwt_t(glb_head.next))->context));
 	}
@@ -450,6 +478,18 @@ lwt_rcv(lwt_chan_t c)
 		sys_delete_node(sndrcv_thd->head.prev,sndrcv_thd->head.next);
 		sys_insert_node(&(sndrcv_thd->head),glb_head.prev,&glb_head);
 		count_lwt_info[LWT_INFO_NSNDING]--;
+		count_lwt_info[LWT_INFO_NTHD_RUNNABLE]++;
+		/* See if the channel have a channel group. If yes, we need to reevaluate the
+		 * status of this channel in the channel group.
+		 */
+		if((c->chgp!=0)&&(c->blocked_num==1))
+		{
+			sys_delete_node(c->head.prev,c->head.next);
+			sys_insert_node(&(c->head),c->chgp->idle_head.prev,&(c->chgp->idle_head));
+			c->chgp->pend_cnt--;
+		}
+		c->blocked_num--;
+
 		return (void*)sndrcv_thd->sndrcv_data;
 	}
 	else
@@ -459,6 +499,7 @@ lwt_rcv(lwt_chan_t c)
 		sys_delete_node(sndrcv_thd->head.prev,sndrcv_thd->head.next);
 		sys_insert_node(&(sndrcv_thd->head),c->receiving.prev,&(c->receiving));
 		count_lwt_info[LWT_INFO_NRCVING]++;
+		count_lwt_info[LWT_INFO_NTHD_RUNNABLE]--;
 		c->snd_cnt++;
 
 		__lwt_dispatch(&(sndrcv_thd->context),&((list_to_lwt_t(glb_head.next))->context));
@@ -506,21 +547,199 @@ lwt_snd_chan(lwt_chan_t c,lwt_chan_t sending)
 }
 /* End Function:lwt_snd_chan **********************************************/
 
-/* Begin Function:lwt_rcv_chan *****************************************************
+/* Begin Function:lwt_rcv_chan *********************************************
 Description : Receive a channel.
 Input       : lwt_chan_t c - The channel to receive from.
 Output      : None.
 Return      : lwt_chan_t - received channel.
-******************************************************************************/
+***************************************************************************/
 lwt_chan_t
 lwt_rcv_chan(lwt_chan_t c)
 {
 	return lwt_rcv(c);
-
 }
-/* End Function:lwt_rcv_chan ***************************************************/
+/* End Function:lwt_rcv_chan **********************************************/
 
+/* Begin Function:lwt_cgrp *************************************************
+Description : Create a channel group.
+Input       : None.
+Output      : None.
+Return      : lwt_cgrp_t - The channel group returned.
+***************************************************************************/
+lwt_cgrp_t
+lwt_cgrp(void)
+{
+	/* Allocate the channel group */
+	lwt_cgrp_t cgrp;
+	cgrp=malloc(sizeof(struct lwt_channel_group));
+	sys_create_list(&(cgrp->idle_head));
+	sys_create_list(&(cgrp->pend_head));
+	cgrp->chan_cnt=0;
+	cgrp->pend_cnt=0;
+	count_lwt_info[LWT_INFO_NCGRP]++;
+	return cgrp;
+}
+/* End Function:lwt_cgrp **************************************************/
 
+/* Begin Function:lwt_cgrp_free ********************************************
+Description : Create a channel group.
+Input       : lwt_chan_t c - The channel to receive from.
+Output      : None.
+Return      : int - If successful,0; else return -1.
+***************************************************************************/
+int
+lwt_cgrp_free(lwt_cgrp_t cgrp)
+{
+	lwt_chan_t temp;
+	/* Free the channel group */
+	if(cgrp->pend_cnt!=0)
+		return -1;
+
+	/* Remove all the channels from the channel group */
+	while((cgrp->idle_head.next)!=&(cgrp->idle_head))
+	{
+		temp=list_to_chan_t(cgrp->idle_head.next);
+		temp->chgp=0;
+		sys_delete_node(temp->head.prev,temp->head.next);
+	}
+
+	count_lwt_info[LWT_INFO_NCGRP]--;
+	free(cgrp);
+	return 0;
+}
+/* End Function:lwt_cgrp_free *********************************************/
+
+/* Begin Function:lwt_cgrp_add *********************************************
+Description : Add a channel to a channel froup.
+Input       : lwt_cgrp t cgrp - The channel group to add to.
+  	  	  	  lwt_chan_t chan - The channel to add to the channel group.
+Output      : None.
+Return      : lwt_chan_t - received channel.
+***************************************************************************/
+int
+lwt_cgrp_add(lwt_cgrp_t cgrp, lwt_chan_t chan)
+{
+	/* The channel have been added to other channel groups? */
+	if(chan->chgp!=0)
+		return -1;
+
+	/* Does the chrrent channel group have any channel attached to it? */
+	if(cgrp->chan_cnt==0)
+	{
+		cgrp->rcv_data=chan->rcv_data;
+	}
+	else
+	{
+		/* Are the channels in one group compatible? */
+		if(cgrp->rcv_data!=chan->rcv_data)
+			return -1;
+	}
+	sys_insert_node(&(chan->head),cgrp->idle_head.prev,&(cgrp->idle_head));
+	cgrp->chan_cnt++;
+	return 0;
+}
+/* End Function:lwt_cgrp_add **********************************************/
+
+/* Begin Function:lwt_cgrp_rem *********************************************
+Description : Remove a channel from the channel group.
+Input       : lwt_cgrp_t cgrp - The channel group.
+              lwt_chan_t chan - The channel to remove.
+Output      : None.
+Return      : int - If there is a pending event on the channel, return 1;
+                    if the channel does not belong to the channel group, return -1;
+                    if successful, 0.
+***************************************************************************/
+int
+lwt_cgrp_rem(lwt_cgrp_t cgrp, lwt_chan_t chan)
+{
+	/* Does this channel belong to the channel group? */
+	if(chan->chgp!=cgrp)
+		return -1;
+
+	/* Is there are a event on this channel? - must be a channel */
+	if(chan->sending.next!=&(chan->sending))
+		return 1;
+
+	/* We can safely remove it now */
+	sys_delete_node(chan->head.prev,chan->head.next);
+	cgrp->chan_cnt--;
+	chan->chgp=0;
+	return 0;
+}
+/* End Function:lwt_cgrp_rem **********************************************/
+
+/* Begin Function:lwt_cgrp_wait ********************************************
+Description : Wait for a channel group.
+Input       : lwt_cgrp_t cgrp - The channel group to receive from.
+Output      : None.
+Return      : lwt_chan_t - received channel.
+***************************************************************************/
+lwt_chan_t
+lwt_cgrp_wait(lwt_cgrp_t cgrp)
+{
+	lwt_t rcvgrp_thd;
+	/* see if there are channels blocked. If there is, receive from it */
+	if(cgrp->pend_cnt!=0)
+		return cgrp->pend_head.next;
+
+	/* Nobody sending. Block me */
+	count_lwt_info[LWT_INFO_NRCVGRPING]++;
+	count_lwt_info[LWT_INFO_NTHD_RUNNABLE]--;
+	rcvgrp_thd=list_to_lwt_t(glb_head.next);
+	sys_delete_node(rcvgrp_thd->head.prev,rcvgrp_thd->head.next);
+	sys_insert_node(&(rcvgrp_thd->head),cgrp->recv_head.prev,&(cgrp->recv_head));
+	__lwt_dispatch(&(rcvgrp_thd->context),&((list_to_lwt_t(glb_head.next))->context));
+
+	/* I'm unblocked. There must be some channel pending. Get that channel and return. */
+	return cgrp->pend_head.next;
+}
+/* End Function:lwt_cgrp_wait *********************************************/
+
+/* Begin Function:lwt_chan_mark_set ****************************************
+Description : Associate a channel with a mark.
+Input       : lwt_chan_t c - The channel to associate with.
+              void* mark - The mark to associate with the channel.
+Output      : None.
+Return      : lwt_chan_t - received channel.
+***************************************************************************/
+void
+lwt_chan_mark_set(lwt_chan_t c, void* mark)
+{
+	c->mark=mark;
+}
+/* End Function:lwt_chan_mark_set *****************************************/
+
+/* Begin Function:lwt_chan_mark_get ****************************************
+Description : Get the mark associated with the channel.
+Input       : lwt_chan_t c - The channel to consult mark.
+Output      : None.
+Return      : void* - The mark
+***************************************************************************/
+void*
+lwt_chan_mark_get(lwt_chan_t c)
+{
+	return c->mark;
+}
+/* End Function:lwt_chan_mark_get *****************************************/
+
+s32 test2(void* data)
+{
+	s32* myvar=malloc(4);
+	*myvar=1234;
+	lwt_snd(data,myvar);
+	return 0;
+}
+
+s32 test(void* data)
+{
+	lwt_chan_t channel=lwt_chan(4);
+	lwt_t sender=lwt_create_chan(test2,channel);
+	s32* myvar=lwt_rcv(channel);
+	printf("I received %d\n",*myvar);
+	free(myvar);
+	lwt_join(sender);
+	exit(0);
+}
 
 
 
