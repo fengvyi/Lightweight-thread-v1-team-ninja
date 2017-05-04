@@ -1,0 +1,113 @@
+/*
+ ============================================================================
+ Name        : sys_list.h
+ Author      : ZF Song, RY Pan
+ Version     : Created on: Feb 6, 2017
+ Copyright   : Ninja
+ Description : The definition of Struct list_head and singly linked list
+ 	 	 	   operations.
+ ============================================================================
+ */
+
+
+
+/* Defines *******************************************************************/
+#ifndef SYS_LIST_H_
+#define SYS_LIST_H_
+/* End Defines ***************************************************************/
+
+/* Begin Struct: list_head ****************************************************
+Description : The classical singly linked list head from Linux
+Referred to : kernel.c,kernel.h
+******************************************************************************/
+struct list_head
+{
+    struct list_head* next;
+};
+/* End Struct: list_head *****************************************************/
+
+
+/* Public Global Variables ***************************************************/
+/* Thread pool is still shared */
+struct list_head pool_head;
+/* End Public Global Variables ***********************************************/
+
+/* The CAS and faa stub */
+static inline int
+cos_cas(unsigned long *target, unsigned long old, unsigned long updated)
+{
+	char z;
+	__asm__ __volatile__("lock cmpxchgl %2, %0; setz %1"
+			     : "+m" (*target),
+			       "=a" (z)
+			     : "q"  (updated),
+			       "a"  (old)
+			     : "memory", "cc");
+	return (int)z;
+}
+
+/* Fetch-and-add implementation on x86. It returns the original value
+ * before xaddl. */
+static inline int
+cos_faa(int *var, int value)
+{
+	__asm__ __volatile__("lock xaddl %%eax, %2;"
+			     :"=a" (value)            //Output
+			     :"a" (value), "m" (*var) //Input
+			     :"memory");
+	return value;
+}
+
+/* Begin Function:Sys_create_list *********************************************
+Description : Create a singly linkled list.
+Input       : struct List_Head* Head - The pointer to the list head.
+Output      : None.
+Return      : None.
+******************************************************************************/
+static void LWT_INLINE sys_create_list(struct list_head* Head)
+{
+    /* Do not need critical section handling here */
+    Head->next=Head;
+}
+/* End Function:Sys_create_list **********************************************/
+
+/* Begin Function:Sys_delete_node ****************************************
+Description : Delete a node from the singly-linked list. if we want to delete it elsewhere? We assume that we are always
+              deleting the node from the head of the queue
+Input       : struct List_Head* prev - The previous node of the target node.
+Output      : None.
+Return      : None.
+******************************************************************************/
+static void LWT_INLINE sys_delete_node(struct list_head* prev)
+{
+    struct list_head* old;
+    while(1)
+    {
+        old=prev->next;
+    }
+    prev->next=prev->next->next;
+}
+/* End Function:Sys_delete_node *****************************************/
+
+/* Begin Function:Sys_insert_node ****************************************
+Description : Insert a node to the singly-linked list. This requires knowing the
+              front node of itself.
+Input       : struct List_Head* new_node - The new node to insert.
+			  struct List_Head* prev - The previous node.
+Output      : None.
+Return      : None.
+******************************************************************************/
+static void LWT_INLINE sys_insert_node(struct list_head* new_node,struct list_head* prev)
+{
+    struct list_head* old;
+    while(1)
+    {
+        old=prev->next;
+        new_node->next=old;
+        if(cos_cas(&prev->next,old,new_node)!=0)
+            break;
+    }
+}
+/* End Function:Sys_List_Insert_Node *****************************************/
+
+#endif /* SYS_LIST_H_ */
